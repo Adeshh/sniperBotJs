@@ -1,146 +1,159 @@
 const { ethers } = require('ethers');
 require('dotenv').config();
 
-// Configuration - Pre-resolved for speed
-const WEBSOCKET_PROVIDER_URL = process.env.WSS_URL;
-const TARGET_EVENT_TOPIC = '0xf9d151d23a5253296eb20ab40959cf48828ea2732d337416716e302ed83ca658';
-const VIRTUALS_DEPLOYER_ADDRESS = "0x71B8EFC8BCaD65a5D9386D07f2Dff57ab4EAf533"; // Add the actual deployer address here
+// Configuration
+const WSS_URL = process.env.WSS_URL;
+const TARGET_TOPIC = '0xf9d151d23a5253296eb20ab40959cf48828ea2732d337416716e302ed83ca658';
+const DEPLOYER = "0x71B8EFC8BCaD65a5D9386D07f2Dff57ab4EAf533";
+const WANTED = "0x81F7cA6AF86D1CA6335E44A2C28bC88807491415";
+const UNWANTED = "0x03Fb99ea8d3A832729a69C3e8273533b52f30D1A";
 
-// Global state - Minimal memory allocation
-let provider = null;
-let shouldStopMonitoring = false;
-let resolveCallback = null; // Direct callback reference
-
-// Pre-compiled regex and constants
-const addressRegex = /000000000000000000000000([a-fA-F0-9]{40})/g;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-
-// Ultra-minimal cache - Set is fastest for has() operations
+// Global state
+let provider, shouldStop, resolveCallback;
 const processedTxs = new Set();
+const callerCache = new Map();
+const rejectedCallers = new Set();
 
-// Provider initialization - Optimized for speed
+// Pre-compiled patterns
+const addressRegex = /000000000000000000000000([a-fA-F0-9]{40})/g;
+const WANTED_HEX = WANTED.slice(2).toLowerCase();
+const UNWANTED_HEX = UNWANTED.slice(2).toLowerCase();
+const USE_TX_VERIFICATION = true;
+
+// Provider
 function getProvider() {
     if (!provider) {
-        if (!WEBSOCKET_PROVIDER_URL) {
-            throw new Error('WSS_URL not found in environment variables');
-        }
-        provider = new ethers.WebSocketProvider(WEBSOCKET_PROVIDER_URL);
-        
-        // Minimal error handling - no logging in critical path
-        provider.on('error', (err) => {
-            if (err.message.includes('connection') || err.message.includes('network')) {
-                provider = null; // Force reconnection only on real errors
-            }
-        });
+        provider = new ethers.WebSocketProvider(WSS_URL);
+        provider.on('error', () => provider = null);
     }
     return provider;
 }
 
-// MAXIMUM SPEED: Inline address extraction with zero allocations
-function fastExtractTokenAddress(data) {
-    // Fast exit for invalid data
-    if (!data || data.length < 130) return null; // 2 + 64*2 minimum
+// Extract token and determine caller in one pass
+function extractTokenAndCaller(data) {
+    if (!data || data.length < 130) return null;
     
-    // Reset regex state
     addressRegex.lastIndex = 0;
+    const addresses = [];
+    let match;
+    while ((match = addressRegex.exec(data)) && addresses.length < 10) {
+        const addr = '0x' + match[1];
+        if (addr !== '0x0000000000000000000000000000000000000000') addresses.push(addr);
+    }
     
-    let match1 = addressRegex.exec(data);
-    if (!match1) return null;
+    if (addresses.length < 2) return null;
+    const token = addresses[1];
     
-    let match2 = addressRegex.exec(data);
-    if (!match2) return null;
+    // Check exact addresses first
+    for (const addr of addresses) {
+        if (addr.toLowerCase() === WANTED.toLowerCase()) return { token, confidence: 'WANTED' };
+        if (addr.toLowerCase() === UNWANTED.toLowerCase()) return { token, confidence: 'UNWANTED' };
+    }
     
-    // First address is contract, second is token (based on your pattern)
-    const tokenAddr = '0x' + match2[1];
-    return tokenAddr !== ZERO_ADDRESS ? tokenAddr : null;
+    // Pattern matching fallback
+    const dataLower = data.toLowerCase();
+    if (dataLower.includes(UNWANTED_HEX)) return { token, confidence: 'UNWANTED' };
+    if (dataLower.includes(WANTED_HEX)) return { token, confidence: 'WANTED' };
+    return { token, confidence: 'VERIFY' };
 }
 
-// CRITICAL PATH: Ultra-optimized event processing
-function processEvent(log) {
-    // Fast duplicate check
-    if (processedTxs.has(log.transactionHash)) return;
+// Verify caller with caching
+async function verifyCaller(txHash) {
+    if (callerCache.has(txHash)) return callerCache.get(txHash).toLowerCase() === WANTED.toLowerCase();
+    if (rejectedCallers.has(txHash)) return false;
     
-    // Ultra-fast cache management - clear when full
-    if (processedTxs.size >= 1000) processedTxs.clear();
-    processedTxs.add(log.transactionHash);
-    
-    // Extract token address directly
-    const tokenAddress = fastExtractTokenAddress(log.data);
-    
-    if (tokenAddress) {
-        // IMMEDIATE RESOLUTION - No logging in critical path for max speed
-        shouldStopMonitoring = true;
-        
-        // Instant cleanup and callback
-        provider.removeAllListeners();
-        
-        // IMMEDIATE callback for maximum swap speed
-        resolveCallback(tokenAddress);
-        
-        return tokenAddress;
+    try {
+        const tx = await getProvider().getTransaction(txHash);
+        callerCache.set(txHash, tx.from);
+        const isWanted = tx.from.toLowerCase() === WANTED.toLowerCase();
+        if (!isWanted) rejectedCallers.add(txHash);
+        return isWanted;
+    } catch {
+        rejectedCallers.add(txHash);
+        return false;
     }
 }
 
-// Pure WebSocket monitoring - Zero overhead
-async function setupUltraFastMonitoring() {
-    const filter = { 
-        address: VIRTUALS_DEPLOYER_ADDRESS,  // Only events from legitimate deployer
-        topics: [TARGET_EVENT_TOPIC] 
-    };
-    
-    // ONLY event listener - maximum efficiency, zero fake tokens
-    getProvider().on(filter, (log) => {
-        if (shouldStopMonitoring) return;
-        processEvent(log);
-    });
+// Execute callback
+function executeCallback(token) {
+    if (shouldStop) return;
+    console.log(`🚀 DETECTED: ${token} | ${new Date().toISOString()}`);
+    shouldStop = true;
+    provider.removeAllListeners();
+    resolveCallback(token);
 }
 
-// Main function: Maximum speed token detection
+// Process events
+function processEvent(log) {
+    if (processedTxs.has(log.transactionHash)) return;
+    
+    // Simple cache management
+    if (processedTxs.size >= 1000) {
+        processedTxs.clear();
+        if (callerCache.size >= 500) callerCache.clear();
+        if (rejectedCallers.size >= 100) rejectedCallers.clear();
+    }
+    processedTxs.add(log.transactionHash);
+    
+    const result = extractTokenAndCaller(log.data);
+    if (!result) return;
+    
+    if (result.confidence === 'WANTED') {
+        executeCallback(result.token);
+    } else if (result.confidence === 'UNWANTED') {
+        console.log(`❌ UNWANTED: ${result.token} from ${UNWANTED} - continuing monitoring...`);
+    } else if (result.confidence === 'VERIFY' && USE_TX_VERIFICATION) {
+        verifyCaller(log.transactionHash).then(isValid => {
+            if (isValid) {
+                executeCallback(result.token);
+            } else {
+                console.log(`❌ REJECTED: ${result.token} (wrong caller) - continuing monitoring...`);
+            }
+        }).catch(() => {
+            console.log(`❌ VERIFY ERROR: ${result.token} (network issue) - continuing monitoring...`);
+        });
+    } else if (result.confidence === 'VERIFY') {
+        executeCallback(result.token);
+    }
+}
+
+// Main function - Live token detection
 async function getTokenAddress(onTokenFound = null) {
     return new Promise(async (resolve, reject) => {
         try {
-            // Store resolve callback globally for direct access
-            resolveCallback = resolve;
+            resolveCallback = onTokenFound ? (token) => {
+                if (token && token !== '0x0000000000000000000000000000000000000000') {
+                    onTokenFound(token);
+                    resolve(token);
+                }
+            } : resolve;
             
-            // Store custom callback for immediate execution
-            if (onTokenFound && typeof onTokenFound === 'function') {
-                const originalResolve = resolveCallback;
-                resolveCallback = (tokenAddress) => {
-                    // Execute custom callback immediately (direct call)
-                    onTokenFound(tokenAddress);
-                    // Then resolve the promise
-                    originalResolve(tokenAddress);
-                    // Log AFTER swap is triggered (non-blocking)
-                    console.log(`🚀 ${tokenAddress} | ${new Date().toISOString()}`);
-                };
-            }
-            
-            // Reset state - minimal operations
-            shouldStopMonitoring = false;
+            shouldStop = false;
             processedTxs.clear();
+            console.log(`🔍 Monitoring for tokens from: ${WANTED}`);
+            console.log(`❌ Will reject tokens from: ${UNWANTED}`);
             
-            // Setup monitoring immediately
-            await setupUltraFastMonitoring();
+            getProvider().on({ address: DEPLOYER, topics: [TARGET_TOPIC] }, (log) => {
+                if (!shouldStop) {
+                    try {
+                        processEvent(log);
+                    } catch (error) {
+                        console.log(`⚠️  Processing error: ${error.message} - continuing monitoring...`);
+                    }
+                }
+            });
             
         } catch (error) {
-            shouldStopMonitoring = true;
-            if (provider) provider.removeAllListeners();
+            shouldStop = true;
+            provider?.removeAllListeners();
             reject(error);
         }
     });
 }
 
-// Ultra-minimal shutdown
-process.on('SIGINT', () => {
-    shouldStopMonitoring = true;
-    if (provider) provider.destroy();
-    process.exit(0);
-});
+// CLI - Live detection only
+if (require.main === module) {
+    getTokenAddress().then(console.log).catch(() => process.exit(1));
+}
 
-// Export
-module.exports = {
-    getTokenAddress,
-    TARGET_EVENT_TOPIC,
-    WEBSOCKET_PROVIDER_URL,
-    VIRTUALS_DEPLOYER_ADDRESS
-};
+module.exports = { getTokenAddress };
