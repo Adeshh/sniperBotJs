@@ -121,10 +121,15 @@ function processEvent(log) {
 async function getTokenAddress(onTokenFound = null) {
     return new Promise(async (resolve, reject) => {
         try {
-            resolveCallback = onTokenFound ? (token) => {
+            resolveCallback = onTokenFound ? async (token) => {
                 if (token && token !== '0x0000000000000000000000000000000000000000') {
-                    onTokenFound(token);
-                    resolve(token);
+                    try {
+                        await onTokenFound(token);  // Wait for swap to complete
+                        resolve(token);             // Only resolve after swap is done
+                    } catch (error) {
+                        console.error('❌ Callback error:', error.message);
+                        resolve(token); // Still resolve with token even if swap fails
+                    }
                 }
             } : resolve;
             

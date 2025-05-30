@@ -10,8 +10,8 @@ const MAX_RETRIES = 30;
 const RETRY_DELAY_MS = 200;
 const ULTRA_FAST_GAS = {
   gasLimit: 250000,
-  maxFeePerGas: ethers.parseUnits('40', 'gwei'),
-  maxPriorityFeePerGas: ethers.parseUnits('20', 'gwei')
+  maxFeePerGas: ethers.parseUnits('4', 'gwei'),
+  maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
 };
 
 async function performSwap(amount, tokenIn, tokenOut) {
@@ -34,9 +34,22 @@ async function performSwap(amount, tokenIn, tokenOut) {
       return tx; // Return immediately without waiting for confirmation
 
     } catch (error) {
-      console.error(`Attempt ${retries + 1} failed: ${error.message}`);
+      console.error(`❌ Swap attempt ${retries + 1} failed: ${error.message}`);
+      
+      if (error.code === 'INSUFFICIENT_FUNDS') {
+        console.error(`💰 Insufficient funds. Need: ${ethers.formatEther(amount)} tokens`);
+      } else if (error.message.includes('TRANSFER_FROM_FAILED')) {
+        console.error(`🔒 Transfer failed - check token approvals for ${tokenIn}`);
+      } else if (error.message.includes('UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT')) {
+        console.error(`📉 Insufficient output amount - slippage too high`);
+      } else if (error.message.includes('UniswapV2: INSUFFICIENT_LIQUIDITY')) {
+        console.error(`🌊 Insufficient liquidity for this pair`);
+      }
+      
       retries++;
-      await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+      if (retries < MAX_RETRIES) {
+        await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+      }
     }
   }
 

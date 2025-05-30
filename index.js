@@ -5,7 +5,7 @@ const { ethers } = require('ethers');
 
 // Trading parameters
 const APPROVAL_AMOUNT = ethers.parseEther("100000000"); // 100 millions
-const AMOUNT_IN = ethers.parseEther("0.01"); // 0.1 ETH swap amount
+const AMOUNT_IN = ethers.parseEther("10"); // 0.1 ETH swap amount
 const VIRTUALS_ADDRESS = "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b";
 
 // Main execution
@@ -15,23 +15,31 @@ async function main() {
         
         const tokenAddress = await getTokenAddress(async (detectedToken) => {
             try {
+                console.log(`⚡ Starting swap for: ${detectedToken}`);
+                
                 // Immediate swap
                 const swapTx = await performSwap(AMOUNT_IN, VIRTUALS_ADDRESS, detectedToken);
                 console.log(`🚀 Swapped: ${swapTx.hash}`);
                 
-                // // Approval for selling (after swap)
-                // await approve(detectedToken, APPROVAL_AMOUNT);
-                // console.log('✅ Approved');
+                // Approval for selling (after swap)
+                console.log(`🔒 Approving ${detectedToken} for selling...`);
+                await approve(detectedToken, APPROVAL_AMOUNT);
+                console.log('✅ Approved for selling');
                     
             } catch (error) {
-                console.error('❌ Swap failed:', error.message);
+                console.error('❌ Swap/Approval failed:', error.message);
+                console.error('📋 Full error:', error);
+                
+                // Don't throw - let monitoring continue for next token
+                return;
             }
         });
         
         console.log(`🎯 Complete: ${tokenAddress}`);
         
     } catch (error) {
-        console.error('❌ Failed:', error.message);
+        console.error('❌ Main execution failed:', error.message);
+        console.error('📋 Full error:', error);
     }
     
     process.exit(0);
