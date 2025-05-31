@@ -75,12 +75,18 @@ async function verifyCaller(txHash) {
 }
 
 // Execute callback
-function executeCallback(token) {
+async function executeCallback(token) {
     if (shouldStop) return;
     console.log(`🚀 DETECTED: ${token} | ${new Date().toISOString()}`);
     shouldStop = true;
     provider.removeAllListeners();
-    resolveCallback(token);
+    
+    // Execute the callback and handle async properly
+    try {
+        await resolveCallback(token);
+    } catch (error) {
+        console.error('❌ Execute callback error:', error.message);
+    }
 }
 
 // Process events
@@ -99,13 +105,17 @@ function processEvent(log) {
     if (!result) return;
     
     if (result.confidence === 'WANTED') {
-        executeCallback(result.token);
+        executeCallback(result.token).catch(err => {
+            console.error('❌ Callback execution failed:', err.message);
+        });
     } else if (result.confidence === 'UNWANTED') {
         console.log(`❌ UNWANTED: ${result.token} from ${UNWANTED} - continuing monitoring...`);
     } else if (result.confidence === 'VERIFY' && USE_TX_VERIFICATION) {
         verifyCaller(log.transactionHash).then(isValid => {
             if (isValid) {
-                executeCallback(result.token);
+                executeCallback(result.token).catch(err => {
+                    console.error('❌ Verification callback failed:', err.message);
+                });
             } else {
                 console.log(`❌ REJECTED: ${result.token} (wrong caller) - continuing monitoring...`);
             }
@@ -113,7 +123,9 @@ function processEvent(log) {
             console.log(`❌ VERIFY ERROR: ${result.token} (network issue) - continuing monitoring...`);
         });
     } else if (result.confidence === 'VERIFY') {
-        executeCallback(result.token);
+        executeCallback(result.token).catch(err => {
+            console.error('❌ Trust mode callback failed:', err.message);
+        });
     }
 }
 
@@ -122,14 +134,21 @@ async function getTokenAddress(onTokenFound = null) {
     return new Promise(async (resolve, reject) => {
         try {
             resolveCallback = onTokenFound ? async (token) => {
+                console.log(`🔄 Callback triggered for: ${token}`);
                 if (token && token !== '0x0000000000000000000000000000000000000000') {
                     try {
+                        console.log(`⚡ Executing onTokenFound callback...`);
                         await onTokenFound(token);  // Wait for swap to complete
+                        console.log(`✅ Callback completed successfully`);
                         resolve(token);             // Only resolve after swap is done
                     } catch (error) {
                         console.error('❌ Callback error:', error.message);
+                        console.error('📋 Full callback error:', error);
                         resolve(token); // Still resolve with token even if swap fails
                     }
+                } else {
+                    console.log(`⚠️ Invalid token address: ${token}`);
+                    resolve(token);
                 }
             } : resolve;
             
