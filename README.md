@@ -94,7 +94,7 @@ await virtualsContract.approve(routerAddress, ethers.MaxUint256);
 ```javascript
 const APPROVAL_AMOUNT = ethers.parseEther("100000000"); // 100M tokens
 const AMOUNT_IN = ethers.parseEther("200");             // 200 VIRTUALS
-const VIRTUALS_ADDRESS = "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b";
+const VIRTUALS_ADDRESS = "";
 ```
 
 ### Gas Settings (utils/swap.js)
@@ -104,12 +104,6 @@ const ULTRA_FAST_GAS = {
   maxFeePerGas: ethers.parseUnits('40', 'gwei'),     // Adjust for Base chain
   maxPriorityFeePerGas: ethers.parseUnits('20', 'gwei')
 };
-```
-
-### Detection Settings (utils/ultra_fast_detector.js)
-```javascript
-const TARGET_EVENT_TOPIC = '0xf9d151d23a5253296eb20ab40959cf48828ea2732d337416716e302ed83ca658';
-const VIRTUALS_DEPLOYER_ADDRESS = "0x71B8EFC8BCaD65a5D9386D07f2Dff57ab4EAf533";
 ```
 
 ## 🚀 Usage
@@ -122,7 +116,7 @@ node index.js
 ### Expected Output
 ```
 🔍 Starting...
-⚡ Monitoring deployer: 0x71B8EFC8BCaD65a5D9386D07f2Dff57ab4EAf533
+⚡ Monitoring deployer: 
 🚀 0x1234abcd... | 2025-05-29T15:30:45.123Z
 🚀 Swap submitted: 0xabcd1234... | 2025-05-29T15:30:45.234Z
 ✅ Approval submitted: 0xef567890...
